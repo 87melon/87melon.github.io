@@ -1,0 +1,423 @@
+<!-- @author: Smile Chen, https://github.com/SmileChen518/H5-games -->
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> 
+    <title>Sudoku</title>
+    <style>
+    	canvas { width: 100%; height: 100% }
+    	body {
+				font-family: Monospace;
+				background-color: #000;
+				color: #fff;
+				margin: 0px;
+				overflow: hidden;
+			}
+		#info {
+				color: #000;
+				position: absolute;
+				top: 10px;
+				width: 100%;
+				text-align: center;
+				z-index: 100;
+				display:block;
+			}
+	</style>
+    <script src="../js/three.js"></script>
+    <script src='../js/stats.js'></script>
+    <script src="../js/TweenMax.min.js"></script>
+</head>
+<body>
+	<div id="info"> <font size="40">数独</font> </div>
+	<script>
+		var stats, renderer, camera, scene, sound, loader;
+		var _bGameOver, _iRow = 9, _iTotal, preObj, LENGTH = 63, OFFSET = LENGTH*(_iRow-1)/2;
+		var materials, group, _tNums, _tNull, gHelp;
+		//初始化参数
+		function initParas(){
+			materials = []; //0按钮，1地雷，2旗帜，3-12数字0-9，13绿旗，14播放
+			var material = new THREE.MeshBasicMaterial();
+			for (var i = 0; i < 5; i++) for (var j = 0; j < 3; j++){
+				var mat = material.clone();
+				mat.map = new THREE.TextureLoader().load( 'pic/nums.png' );
+				mat.map.offset = new THREE.Vector2(0.33*j, 0.8-0.2*i);
+				mat.map.repeat = new THREE.Vector2(.33, .2);
+				materials.push(mat);
+			}
+
+			_iTotal = Math.pow(_iRow, 2);
+			_tNums = [];
+			_tNull = [];
+			_bGameOver = false;
+		}
+		//初始化事件
+		function initEvent () {
+			addEventListener('click', onMouseClick, false);
+			addEventListener('touchstart', onMouseClick, false);
+			window.addEventListener( 'resize', onWindowResize, false );
+		}
+		function initStat() {
+        	stats = new Stats();
+			stats.setMode(0); // 0: fps, 1: ms
+			stats.domElement.style.position = 'absolute';
+			stats.domElement.style.left = '0px';
+			stats.domElement.style.top = '0px';
+			document.body.appendChild( stats.domElement );
+        }
+        //初始化渲染器
+		function initRederer(){
+			renderer = new THREE.WebGLRenderer( { antialias: true } );
+			renderer.setPixelRatio( window.devicePixelRatio );
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			document.body.appendChild( renderer.domElement );
+		}
+		//初始化相机
+		function initCamera(){
+			//透视相机
+			// camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+			//正交相机
+			camera = new THREE.OrthographicCamera( window.innerWidth / - 2, window.innerWidth / 2, window.innerHeight / 2, window.innerHeight / - 2, 10, 1000 );
+			camera.position.set( 0, 0, 100 );
+		}
+		//初始化场景
+		function initScene(){
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color( 0x2E8B57 );
+			// scene.fog = new THREE.Fog( 0xcce0ff, 500, 10000 );
+		}
+		//初始化声音监听器
+		function initListener () {
+			var listener = new THREE.AudioListener();
+			camera.add(listener);
+			sound = new THREE.Audio(listener);
+			sound.setVolume(0.5);
+			loader = new THREE.AudioLoader();
+		}
+		// 初始化轨迹球控件
+	    function initOrbControls() {
+	        var orbControl = new THREE.OrbitControls(camera, renderer.domElement);
+	        orbControl.minDistance = 25;
+			orbControl.maxDistance = 1000;
+	    }
+        function initLight() {
+        	// light = new THREE.AmbientLight(0x00FF00);
+        	// scene.add(light);
+            var light = new THREE.DirectionalLight(0xFFFFFF, 1, 0);
+            light.position.set(0, 0, 1);
+            // scene.add(light);
+            // light = new THREE.PointLight(0x0000FF);
+            // light.position.set(0, 0, 100);
+            scene.add(light);
+        }
+        function initGrid(){
+            var helper = new THREE.GridHelper( 1000, 50 );
+            helper.rotation.x = Math.PI/2;
+            scene.add( helper );
+        }
+        // 格子
+		function initGroup(){
+			group = new THREE.Group();
+			gHelp = new THREE.Group();
+			geometry = new THREE.CubeGeometry( LENGTH, LENGTH, LENGTH );
+			mesh = new THREE.Mesh( geometry, materials[0] );
+			mesh.position.set(-OFFSET, OFFSET, -OFFSET);
+			group.add(mesh);
+			mesh.scale.set(.85,.85,.85);
+			var helpColor = 0xFF0000;
+			var boxHelp = new THREE.BoxHelper(mesh, helpColor);
+			var scale = 5;
+			boxHelp.scale.set(scale,scale,scale);
+        	gHelp.add(boxHelp);
+			for (var i = 0; i < _iRow; i++) for (var j = 0; j < _iRow; j++) for (var z = 0; z < 1; z++){
+				if (i == 0 && j == 0 && z == 0) continue;
+				var temp = mesh.clone();
+				temp.position.set(LENGTH*j-OFFSET, -LENGTH*i+OFFSET, LENGTH*z-OFFSET);
+				group.add(temp);
+				temp.scale.set(.85,.85,.85);
+				boxHelp = new THREE.BoxHelper(temp, helpColor);
+				boxHelp.scale.set(scale,scale,scale);
+	        	gHelp.add(boxHelp);
+			}
+			var PY = 1.8*LENGTH;
+			//menus
+			var geo = new THREE.CubeGeometry( 2*LENGTH, 2*LENGTH, 2*LENGTH );
+        	var box = new THREE.Mesh( geo, materials[14] );
+        	group.add(box);
+        	box.position.set(-3*LENGTH, OFFSET+PY, -OFFSET );
+        	//nums
+        	for (var i = 0; i < 10; i++) {
+        		var temp = mesh.clone();
+        		temp.position.set(LENGTH*i-OFFSET-0.5*LENGTH, -OFFSET-PY, -OFFSET);
+        		temp.material = materials[3+i];
+				group.add(temp);
+        	};
+        	//back
+        	var back = box.clone();
+        	back.material = materials[13];
+        	group.add(back);
+        	back.position.set(3*LENGTH, OFFSET+PY, -OFFSET)
+
+        	scene.add( group );
+        	scene.add(gHelp);
+		}
+		// 3*3网格线
+		function initLines () {
+			var mat = new THREE.LineBasicMaterial({color: 0x000000, linewidth: 10})
+			var geo = new THREE.Geometry();
+			geo.vertices.push(new THREE.Vector3(-OFFSET-LENGTH/2, OFFSET-2.5*LENGTH, -OFFSET+LENGTH/2), new THREE.Vector3(OFFSET+LENGTH/2, OFFSET-2.5*LENGTH, -OFFSET+LENGTH/2));
+			for (var i = 0; i < 4; i++) {
+				var line = new THREE.Line(geo, mat);
+				line.position.y = OFFSET-LENGTH-3*LENGTH*i;
+				scene.add(line);
+
+				var line2 = new THREE.Line(geo, mat);
+				line2.position.y = OFFSET-4*LENGTH;
+				line2.rotation.z = 90 * Math.PI / 180;
+				line2.position.x = OFFSET+2*LENGTH-3*LENGTH*i;
+				scene.add(line2);
+			};
+		}
+		function onWindowResize() {
+
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize( window.innerWidth, window.innerHeight );
+
+		}
+		function playSound (s) {
+			if (sound.listener.context.state != 'running'){
+				console.log('重启audioCtx');
+				sound.listener.context.resume();
+			}
+			loader.load( 'audio/'+s+'.mp3', function( buf ) {
+			    sound.setBuffer( buf );
+			    sound.play();
+			});
+		}
+		// 鼠标单击触发的方法
+	    function onMouseClick(event) {
+	        // 获取 raycaster 和所有模型相交的数组，其中的元素按照距离排序，越近的越靠前
+	        var intersects = getIntersects(event);
+
+	        // 获取选中最近的 Mesh 对象
+	        if (intersects.length != 0 && intersects[0].object instanceof THREE.Mesh) {
+	        	var obj = intersects[0].object;
+	            var idx = group.children.indexOf(obj);
+	            // console.log("idx = ", idx);
+	            if (idx == _iTotal) {
+	            	playSound("click");
+	            	onStart();
+	            } else if (idx == _iTotal+11)
+					window.location.href='../index.html';
+	            else if (!_bGameOver) {
+	            	if (idx > _iTotal){
+	            		playSound("click");
+	            		if (preObj) preObj.material.color = new THREE.Color( 0xffffff );
+	            		obj.material.color = new THREE.Color( 0x00aaff );
+	            		preObj = obj;
+	            	}else if (preObj != null && _tNull.indexOf(idx) != -1){
+	            		obj.material = preObj.material;
+	            		_tNums[Math.floor(idx/_iRow)][idx%_iRow] = materials.indexOf(obj.material)-3;
+	            		var b = checkWin();
+	            		if (b) {
+	            			playSound("win");
+							showResult();
+							_bGameOver = true;
+	            		} else playSound("check");
+	            	}
+	            }
+	            
+	        }
+	    }
+	    // 获取与射线相交的对象数组
+	    function getIntersects(event) {
+	        event.preventDefault();
+
+	        // 声明 raycaster 和 mouse 变量
+	        var raycaster = new THREE.Raycaster();
+	        var mouse = new THREE.Vector2();
+
+	        // 通过鼠标点击位置,计算出 raycaster 所需点的位置,以屏幕为中心点,范围 -1 到 1
+	        var posX = event.clientX, posY = event.clientY;
+	        var u = navigator.userAgent;
+			// var isAndroid = u.indexOf('Android') > -1 || u.indexOf('Adr') > -1; //android终端
+			var isiOS = !!u.match(/\(i[^;]+;( U;)? CPU.+Mac OS X/); //ios终端
+			if (isiOS){
+				posX = event.pageX;
+				posY = event.pageY;
+			}
+			mouse.x = (posX / window.innerWidth) * 2 - 1;
+	        mouse.y = -(posY / window.innerHeight) * 2 + 1;
+
+	        //通过鼠标点击的位置(二维坐标)和当前相机的矩阵计算出射线位置
+	        raycaster.setFromCamera(mouse, camera);
+
+	        //获取group下的mesh
+	        var scensObjs = [];
+		    scene.children.forEach(child => {
+			    for (var i = 0; i < child.children.length; i++) {
+			      var obj=child.children[i];
+			      scensObjs.push(obj);
+			    }
+		    });
+		    // 获取与射线相交的对象数组，其中的元素按照距离排序，越近的越靠前
+	        var intersects = raycaster.intersectObjects(scensObjs);
+
+	        //返回选中的对象
+	        return intersects;
+	    }
+		function initNums(){
+			var m = 0;
+			for (var i = 0; i < 3; i++) {
+				var rand = new Array(0,1,2,3,4,5,6,7,8).sort((a,b)=>{return Math.random()>.5?-1:1});
+				for (var x = 0; x < 3; x++) for (var y = 0; y < 3; y++) {
+					_tNums[x+m][y+m] = rand[3*x+y]+1;
+				};
+				m += 3;
+			};
+			solveSudoku(_tNums);
+			for (var i = 0; i < _iRow; i++) {
+				var tmp = [0,1,2,3,4,5,6,7,8];
+				for (var j = 0, cnt = Math.floor(Math.random()*6+1); j < cnt; j++) {
+					var rand = Math.floor(Math.random()*(tmp.length-1));
+					var idx = tmp.splice(rand, 1);
+					_tNums[i][idx] = 0;
+					_tNull.push(parseInt(i*_iRow)+parseInt(idx));
+				};
+			}
+		}
+		function solveSudoku (b) {
+			var m1 = [], m2 = [], m3 = [];
+			for (var i = 0; i < _iRow; i++) {
+				m1.push(1022);
+				m2.push(1022);
+				m3.push(1022);
+			};
+			var l = [];
+			for (var i = 0; i < _iRow; i++) for (var j = 0; j < _iRow; j++) {
+				var num = b[i][j];
+				if (num == 0) l.push(i*9+j);
+				else {
+					var tmp = 1 << num;
+					m1[j] ^= tmp;
+					m2[i] ^= tmp;
+					m3[3*Math.floor(i/3)+Math.floor(i/3)] ^= tmp;
+				}
+			};
+			getValid(b, 0, m1, m2, m3, l);
+		}
+		function getValid (b, k, m1, m2, m3, l) {
+			var idx = l[k];
+			var col = idx % 9, row = Math.floor(idx/9), block = 3*Math.floor(row/3)+Math.floor(col/3);
+			var num = m1[col] & m2[row] & m3[block]; //某位为1即可能的解
+			while(num > 0){
+				var tmp = num & -num; //二进制数右边数起第一个是1的数
+				num ^= tmp;
+				b[row][col] = getBinaryCnt(tmp);
+				m1[col] ^= tmp;
+				m2[row] ^= tmp;
+				m3[block] ^= tmp;
+				if (k+1 == l.length) return true;
+				if (getValid(b, k+1, m1, m2, m3, l)) return true;
+				b[row][col] = 0;
+				m1[col] |= tmp;
+				m2[row] |= tmp;
+				m3[block] |= tmp;
+			}
+			return false;
+		}
+		//获取1右边0的个数
+		function getBinaryCnt (n) {
+			var cnt = 0;
+			while(n>1){
+				cnt++;
+				n = n >> 1;
+			}
+			return cnt;
+		}
+		function initGridShow () {
+			for (var i = 0; i < _iTotal; i++) {
+				gHelp.children[i].visible = false;
+			};
+			for (var i = 0; i < _tNull.length; i++) {
+				gHelp.children[_tNull[i]].visible = true;
+			};
+			for (var i = 0; i < _iTotal; i++) {
+				var row = Math.floor(i/_iRow);
+				var col = i%_iRow;
+				group.children[i].material = materials[3+_tNums[row][col]];
+			};
+		}
+	    function checkWin () {
+	    	var r = [0,0,0,0,0,0,0,0,0];
+	    	var c = [0,0,0,0,0,0,0,0,0];
+	    	var b = [0,0,0,0,0,0,0,0,0];
+	    	for (var i = 0; i < _iRow; i++) {
+	    		for (var j = 0; j < _iRow; j++) {
+	    			var num = _tNums[i][j];
+	    			if (num == 0) return false;
+	    			var tmp = 1 << num;
+	    			var idx = 3*Math.floor(i/3)+Math.floor(j/3);
+	    			if ((tmp & r[i]) == tmp || (tmp & c[j]) == tmp || (tmp & b[idx]) == tmp) return false;
+	    			r[i] |= tmp;
+	    			c[j] |= tmp;
+	    			b[idx] |= tmp;
+		    	};
+		    }
+	    	return true;
+	    }
+	    function showResult () {
+	    	var timerandom = 0.5;
+	    	for (var i = 0; i < _iRow; i++) for (var j = 0; j < _iRow; j++){
+	    		var idx = i * _iRow + j;
+	    		var obj = group.children[idx];
+			    TweenMax.to(
+			        obj.position,
+			        timerandom,
+			        {x:obj.position.x+(0.5-Math.random())*500,y:obj.position.y+(0.5-Math.random())*500,delay:0,} 
+			    );
+			    TweenMax.to(
+                    obj.position,
+                    timerandom,
+                    {x:LENGTH*j-OFFSET,y:-LENGTH*i+OFFSET,delay:.6,ease:Power2.easeIn} 
+                );
+			}
+	    }
+	    function onStart(){
+	    	// var start = new Date().getTime();
+			_bGameOver = false;
+			for (var i = 0; i < 9; i++) {
+				_tNums[i] = [0,0,0,0,0,0,0,0,0];
+			};
+			_tNull = [];
+			initNums();
+			initGridShow();
+			// var end = new Date().getTime();
+			// console.log(start+" "+end+" "+(end-start));
+		}
+		function init(){
+			initParas();
+			initEvent();
+			initStat();
+			initRederer();
+			initCamera();
+			initScene();
+			initListener();
+			// initLight();
+			// initOrbControls();
+			// initGrid(); //显示网格
+			initGroup();
+			initLines();
+			animate();
+			onStart();
+		}
+		function animate() {
+			renderer.render( scene, camera );
+			requestAnimationFrame( animate );
+			stats.update();
+		}
+		init();
+    </script>
+</body>
+</html>
